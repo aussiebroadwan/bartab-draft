@@ -1,64 +1,118 @@
 # BarTAB Chat - Design Draft
 
-The project aims to build a lightweight group chat system that is self hostable, modular, and developer-friendly. Each server runs as an independent instance, capable of managing its own users, rooms, and media, while remaining minimal and performant.
+> **Status:** Architecture Design Phase - No implementation code yet
 
-At its core, the platform is built around three principles:
+We use Discord. Or rather, we *used to* enjoy using Discord.
 
-- **Append Only Logs (AOL):** for reliable event synchronisation.
-- **Client-side cryptography:** for privacy and integrity with E2EE using Olm/Megolm. Though for MVP we might just do plaintext to ensure we have a working system.
-- **Composable micro services:** that communicate over clean, versioned APIs.
+Since Discord got bought out, it's been going downhill fast. Here in Australia, they're now requiring photos for prove age verification. Last week Discord had a data breach where this ID data was stolen. That's the final straw.
 
-> **Note:** I don't typically like micro services, but I think the way this is split will work well for future multi-tenant implementing.
+As grass touching developers who are sick of this shit and want to go back to the time of monkey, we thought it would be funny (and useful) to build our own simpler version. The alternatives to Discord aren't great, and Discord basically has a monopoly on this space. So here we are... building a lightweight, self-hostable chat system that we actually control. Until we forget and drop the project (tm).
+
+## What We're Building
+
+A lightweight group chat system that's self-hostable, modular, and developer-friendly. Each server runs as its own independent instance, managing its own users, rooms, and media. No corporate overlords, no ID requirements, no data breaches of your personal documents until we realised we cooked the media storage and ended leaking data?
+
+The core design is pretty simple:
+
+- **Append Only Logs (AOL):** Everything is an event in order. No weird state bugs.
+- **Composable microservices:** Clean APIs between services. Each does one thing well.
+
+We're starting with **plaintext messaging for the MVP** because let's be real, we need something that actually works first. Once that's "solid", or if we have someone who has a high ABV score and motivation for developing this, we'll add proper **end-to-end encryption** using Olm (Signal like) or Megolm (Matrix like).
+
+> **Note:** I don't usually like microservices (they're often overkill), but the way we're splitting this up should actually make sense for scaling and potentially doing multi-tenant stuff later. Before you say, "You expect people to actually use this?", I more mean multi-tenant so we can have a test-server and prod-server using the same auth and/or media service for bot testing etc.
 
 ## Key Concepts
 
-- **Bot-First Architecture:** Bots are first-class citizens. A server SDK allows bots or automation services to interact with the same APIs as clients.
-- **Media as BLOBs:** Media uploads are stored through a dedicated Media Service that supports thumbnails, caching, and future CDN integrations.
-- **Simple IAM & ACLs:** Lightweight identity and access control built on JWTs, with planned OpenID Connect (OIDC) integration.
-- **Efficient Sync:** Long polling via `/sync` replaces WebSockets or SSE to simplify scaling, recovery, and stateless operation.
+- **Bots are first-class citizens:** They use the same APIs as regular clients so we should have a strong SDK for this. Let's build snail race on another platform.
+- **Media handling that doesn't suck:** Dedicated media service handles uploads, thumbnails, and caching lets say mini CDN-like.
+- **Simple auth that actually makes sense:** JWT tokens for everything. Maybe OIDC later if we need it or think it could be funny.
+- **Long polling instead of WebSocket hell:** The `/sync` endpoint just works. No sticky sessions, no reconnection chaos, no fucking about with websockets or SSE.
 
-Deploy as Docker Containers, will need to support SQLite3 DB first then probably add a Postgres driver later. Ideally we can plan some form of database backup scheme as well for the SQLite3 driver.
+## Deployment
 
-Having a docker container deployment model, we can allow server bots to be containers running in the same stack. This could allow bots to be directly connected to the server on an internal virtual network across containers, though this being said it would be greatly important to have external access as well.
+Everything runs in Docker containers with SQLite. The end. We'll add backup scripts so you don't lose your data maybe. Ideally, we also build some developer tools which can help manage the environment as well.
+
+Bots can run as containers in the same Docker stack which could be nice having it all connected via internal virtual networks. But we do need to have a way for them to connect remotely as well. 
 
 ## Core Components
 
-The system is composed of three cooperating services, each independently deployable but tightly integrated through the Authentication Service.
+We split this thing into three services that work together:
 
-1. **Authentication Service**: Handles identity, token issuance, and permission scopes. It is the root of trust for all other services and provides public keys for JWT validation via a `.well-known/jwks.json` endpoint.
-2. **Chat Service**: Manages rooms, messages, events, and synchronisation. Implements an **Append Only Log** for message consistency and supports long polling through `/v1/sync` for real-time updates.
-3. **Media Service**: Handles upload, storage, caching, and delivery of media assets. Acts like a simple CDN and integrates authentication for private or public access modes.
+1. **Authentication Service**: Handles logins, creates JWT tokens, and tells other services who's allowed to do what. Without this running, nothing else works.
 
-All services expose **health**, **readiness**, and **.well-known** endpoints for operational monitoring and discovery.
+2. **Chat Service**: Rooms, messages, who's online. Everything goes into an append-only log so message order never gets screwed up (tm). Uses long polling to deliver updates.
 
-![Image.png](assets/example_arch.png)
+3. **Media Service**: Handles file uploads and downloads. Basically a mini CDN with thumbnail generation. Can serve files publicly or require auth.
 
-The authentication service is a core part. The two other services shouldn't be able to run without it. It should have a public endpoint `jwks.json` which contains public keys to validate JWT keys. Consider The following sequence chart.
+All services have health checks and discovery endpoints so you know when stuff breaks.
 
-![Image.png](assets/example_sequence.png)
+![Extra Basic Architectural Diagram](assets/example_arch.png)
+
+The Chat and Media services depend on the Authentication Service and cannot operate without it. The following sequence chart illustrates the authentication flow:
+
+![Extra Basic Sequence Diagram for getting media with auth checking](assets/example_sequence.png)
 
 ## Request for Discussion (RFD) Process
 
-I've been following some of the design decisions that [Oxide](https://oxide.computer/) do. I like the idea of new features or architectural ideas begining as a **Request for Discussion (RFD)**:
+I've been following [Oxide](https://oxide.computer/) through the [Changelog Podcast](https://changelog.com/) and they kept mentioning that they write RFDs for new ideas. I like this concept and would like to implement it for important design features once we have a base system.
 
-1. Create a new markdown file in `/rfd/` (e.g. `RFD-0001-feature-x.md`).
-2. Share it in the dev channel for review and async discussion.
-3. Iterate until accepted or superseded.
+1. Create a markdown file in `/rfd/` (like `RFD-0001-idea.md`)
+2. Share it with everyone for feedback
+3. Iterate until we all agree or decide it's a bad idea through appropriate abuse.
 
-[Oxide Example](https://rfd.shared.oxide.computer/rfd/0001)
+[Check out how Oxide does it](https://rfd.shared.oxide.computer/rfd/0001)
 
-> **Note**: This might be up for vote if people want to do this, otherwise we will just chill with GH issues.
+> **Note**: If this feels like overkill, just open a GitHub issue. I'm not that formal.
 
-## Project Maturity
+## Tech Stack (Planned)
 
-This repository is a **draft workspace**. Once we finalise architecture and key decisions:
+**Backend:**
+- Language: Go
+- Database: SQLite for now, Postgres when people bitch about it
+- Auth: JWTs with RS256/ES256/EdDSA
+- Containers: Docker
 
-- The production repo will be created.
-- Documentation will move to `/docs/`.
-- A static docs site (VitePress or Fumadocs) will publish everything.
-- CI/CD, linting, and migrations will be automated.
+**Frontend:**
+- Web: Maybe Vue or React. Or HTMX if we're feeling chaotic
+- Desktop: Probably Wails (Go) or Tauri (Rust)
+- CLI: Charm.sh because it's just cool, any excuse to use charm
 
-Until then, focus is on:
+## MVP Scope
 
-- Reviewing architecture and service definitions.  
-- Refining the developer experience and deployment model.
+**What we're actually building first:**
+- Basic login (username/password to JWT token)
+- Create rooms (admins only for now)
+- Send plaintext messages (encryption comes later)
+- Upload files and images
+- Long polling for real-time updates
+- Docker deployment
+- SQLite database
+
+**Stuff we're NOT doing yet:**
+- End-to-end encryption (E2EE)
+- 2FA/MFA 
+- OIDC
+- Fancy permissions
+- Reactions 
+- Typing indicators
+- Read receipts
+- PostgreSQL
+- Federation
+- Custom emotes
+
+
+## Project Status
+
+This repo is just design docs right now. We're figuring out what to build before we build it.
+
+**When we're happy with the design:**
+- We'll make a proper repo with actual code
+- Docs will get their own folder
+- Maybe a fancy docs website if we're feeling professional
+- All the CI/CD automation stuff
+- Funny Logo??
+
+**Right now we're just:**
+- Arguing about architecture
+- Making sure the design isn't stupid
+- Figuring out how to make this not suck to deploy
